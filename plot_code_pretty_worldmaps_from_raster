@@ -1,0 +1,165 @@
+## This script enables to prepare and plot ensemble mean data to plot world maps of city data using the tmap package 
+
+## NOTE: the code shown here only is an extract of an original script. It is supposed to demonstrate the use of raster data, 
+## shapefiles and self-written general plot functions to produce predefined world maps. 
+
+###################################################################################################################
+options(scipen=9999)
+
+###################################################################################################################
+
+##libraries 
+library(raster)
+library(ncdf4)
+library(rgdal)
+library(sp)
+library(RNetCDF)
+library(ggplot2)
+library(RColorBrewer)
+library(grid)
+library(gridExtra)
+library(rworldmap)
+library(rworldxtra)
+library(wbstats)
+library(WDI)
+library(stringr)
+library(psych)
+library(readr)
+library(data.table)
+library(geosphere)
+library(DescTools)
+library(rowr)
+library(ncdf)
+library(plyr)
+library(wesanderson)
+library(tmap)
+
+###################################################################################################################
+
+##sample (!) path definitions and sample directory creation
+
+##USUAL CLUSTER PATHS to run via bash
+#cluster_path <- "/p/projects/infradync/lindakru/GCM_atmosphere_biascorr_land/" # rcp26/tas/GFDL_ESM2M/out_tmean30yrs"
+##...
+
+##HOME OFFICE PATHS
+##...
+
+ifelse(!dir.exists(file.path(var_ensmean_path, "City_ensmean")), dir.create(file.path(var_ensmean_path, "City_ensmean")), FALSE)
+
+###################################################################################################################
+
+##definition of some sample (!) vectors
+
+#vectors
+rcph_vec <- c("historical", "rcp26", "rcp45", "rcp60", "rcp85")
+var_vec <- c("out_tmean30yrs","out_amplitude30yrs")
+gcm_vec <- c("GFDL_ESM2M", "HadGEM2_ES", "IPSL_CM5A-LR", "MIROC5")
+ssp_vec <- c("ssp1", "ssp2", "ssp3", "ssp4", "ssp5")
+time_var_vec <<- c("2015_2045", "2045_2065", "2064_2094")
+varnm_vec <- c("Tmean30yrs","amplitude30yrs")
+
+###################################################################################################################
+
+##precondition for plotting world maps with tmap package
+
+data("World")
+worldmap <- World[- which(World$iso_a3 == "ATA" | World$iso_a3 == "ATF"),] # delte Antarctica
+
+
+##precondition for city extracts 
+
+##load shapefiles for world cities 
+world_cities <<-  readOGR(dsn=spatial_path, layer="Export_World_cities")	#from GIS attribute table
+world_cities <<- world_cities
+names(world_cities) 
+##make dataframe based upon relevant data columns in shapefile
+global_cities100000 <<- data.frame(world_cities$Name1, world_cities$ISO3, world_cities$Country, world_cities$Continent, world_cities$Latitude, world_cities$Longitude, world_cities$ES00POP, world_cities$MEAN)
+##get city coordinates
+coord <<- coordinates(world_cities)
+##create base dataframe to append extracted city values
+city_info <- global_cities100000[, c(1,2,4:8)]
+
+###################################################################################################################
+
+##define plot function to produce world maps showing city values -- function is called within the following ENSMEANpast_fun 
+
+prettyENSMEANplots <<- function(plotfls, plotpath){
+    #make title and filename
+    #rast_nme <- gsub(".nc", "", plotfls)
+    
+    plt_nme <- gsub("_", " ", rast_nme)
+    plt_nme <- gsub("ensmean", "Ensemble Mean --", plt_nme)
+    
+    #make world map plot
+    plotsetup <<- tm_shape(worldmap) + tm_fill() + #tm_borders(col = "grey60", lwd = 0.7) +
+      tm_shape(plotfls) + tm_raster(palette = "-Spectral", title= "Difference", #aaa
+                                    n = 6, style="pretty",
+                                    legend.hist = T, legend.hist.title = "Frequency") +
+      tm_shape(worldmap) + tm_borders(col = "grey60", lwd = 0.7) +
+      tm_shape(world_cities) + tm_dots(col= "black", alpha=0.7, size=0.1, border.col = NA, scale = 0.5) +
+      tm_layout(title =plt_nme , title.position = c(0.15,0.02), scale = 0.7, title.size = 1, frame.lwd = 0.2,
+                outer.margins = 0.01,0.01,0.01,0.01, fontface = 1, legend.show=T,
+                legend.position = c(0.005,0.005), legend.stack="horizontal",
+                legend.width=0.3, legend.hist.height=0.25, legend.just=c(0,0))
+    #save plot
+    tmap_save(tm = plotsetup, filename = paste0(plotpath, "/", rast_nme, ".pdf"), width = 15, height = NA,
+              units = "cm", dpi = 300, outer.margins = NA, scale = NA,
+              add.titles = F)
+    return(plotsetup)
+  }## END prettyENSMEANplots
+
+
+###################################################################################################################
+
+##define function to open, get and average data from four different raster datasets, write the averaged raster data and pass to own plot function to create world map, extract city data based on coordinates, create and write a dataset (.csv) for extracted city values
+
+ENSMEANpast_fun <- function(file1, file2, file3, file4, histpath, ensmeanpath, plotpath, citypath){
+    
+    ##open and get raster data
+    r1 <- raster(xmn=-180, xmx=180, ymx=90 , ymn=-90, ncol=720, nrow=360)
+    content <- nc_open(paste0(histpath, file1)) # use 1 year slices
+    r1[] <- t(ncvar_get(content, varid=attributes(content$var)$names[2],  start=c(1,1), count=c(720,360)))
+    nc_close(content)
+    
+    r2 <- raster(xmn=-180, xmx=180, ymx=90 , ymn=-90, ncol=720, nrow=360)
+    content <- nc_open(paste0(histpath, file2)) # use 1 year slices
+    r2[] <- t(ncvar_get(content, varid=attributes(content$var)$names[2],  start=c(1,1), count=c(720,360)))
+    nc_close(content)
+    
+    r3 <- raster(xmn=-180, xmx=180, ymx=90 , ymn=-90, ncol=720, nrow=360)
+    content <- nc_open(paste0(histpath, file3)) # use 1 year slices
+    r3[] <- t(ncvar_get(content, varid=attributes(content$var)$names[2],  start=c(1,1), count=c(720,360)))
+    nc_close(content)
+    
+    r4 <- raster(xmn=-180, xmx=180, ymx=90 , ymn=-90, ncol=720, nrow=360)
+    content <- nc_open(paste0(histpath, file4)) # use 1 year slices
+    r4[] <- t(ncvar_get(content, varid=attributes(content$var)$names[2],  start=c(1,1), count=c(720,360)))
+    nc_close(content)
+    
+    ##make ensmean from four input raster datasets
+    rastersum <- r1+r2+r3+r4
+    ensmean <- (rastersum/4)
+    
+    ##create name for ensmean raster
+    rast_nme <<- paste0("ensmean_", varnm_vec[vn], "_",  rcp_vec[r], "_", "all_gcms_2000")
+    
+    ##write raster
+    writeRaster(ensmean, paste0(ensmeanpath, "/", rast_nme, ".nc"), "CDF", overwrite=TRUE,
+                varname="Data", varunit="other",longname=paste0(rast_nme),
+                xname="lon",yname="lat", zname="time", zunit="year",NAflag=-9999)
+    
+    ##make prettyENSMEANplot -- call plot function 
+    prettyENSMEANplots(ensmean, plotpath)
+    
+    ##extract city values based upon coordinates and cbind to dataframe, assign dynamic name
+    city_values <<- extract(ensmean, coord)
+    assign(paste0("data_", rast_nme), city_values, envir = .GlobalEnv)
+    ##cbind and rename columns
+    city_values_df <<- cbind(city_info, city_values)
+    colnames(city_values_df[length(city_values_df)]) <- paste0("cityVarDifference", rast_nme)
+    
+    ##write extracted city data as .csv
+    write.csv(city_values_df, file = paste0(cityMMTpath, paste0("cityVarDifference", rast_nme, ".csv")), row.names = F)
+    return(get(paste0("data_", rast_nme))) # this is the variable name format  "data_ensmean_MMT_estimates_historical_all_gcms_2000"
+  }## END ENSMEANpast_fun
